@@ -239,7 +239,7 @@ class PaymentController {
         );
       }
 
-      // Nếu đã thanh toán chuyển khoản rồi thì không tạo QR mới.
+      // Nếu đã thanh toán  chuyển khoản rồi thì không tạo QR mới.
       if (payment.payment_status === 'paid_transfer') {
         return res.status(200).json(
           ApiResponse.success(

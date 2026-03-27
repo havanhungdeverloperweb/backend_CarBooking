@@ -27,7 +27,6 @@ const tripAssignmentSchema = new mongoose.Schema({
     index: true
   },
 
-  /** staff: nhân viên phân công; driver: tài xế tự tạo chuyến */
   assignment_source: {
     type: String,
     enum: ['staff', 'driver'],
@@ -346,30 +345,30 @@ tripAssignmentSchema.statics.getStatsByDate = async function(startDate, endDate)
 // ==================== MIDDLEWARE ====================
 
 tripAssignmentSchema.pre('save', async function () {
-  const Booking = mongoose.model('Booking');
-  const booking = await Booking.findById(this.booking_id);
-  if (!booking) {
-    throw new Error('Booking không tồn tại');
-  }
+  // Chỉ validate tham chiếu khi tạo mới hoặc khi thay đổi
+  if (this.isNew || this.isModified('booking_id') || this.isModified('driver_id') || this.isModified('vehicle_id')) {
+    const Booking = mongoose.model('Booking');
+    const booking = await Booking.findById(this.booking_id);
+    if (!booking) {
+      throw new Error('Booking không tồn tại');
+    }
 
-  const Driver = mongoose.model('Driver');
-  const driver = await Driver.findById(this.driver_id);
-  if (!driver) {
-    throw new Error('Tài xế không tồn tại');
-  }
+    const Driver = mongoose.model('Driver');
+    const driver = await Driver.findById(this.driver_id);
+    if (!driver) {
+      throw new Error('Tài xế không tồn tại');
+    }
 
-  const Vehicle = mongoose.model('Vehicle');
-  const vehicle = await Vehicle.findById(this.vehicle_id);
-  if (!vehicle) {
-    throw new Error('Xe không tồn tại');
-  }
+    const Vehicle = mongoose.model('Vehicle');
+    const vehicle = await Vehicle.findById(this.vehicle_id);
+    if (!vehicle) {
+      throw new Error('Xe không tồn tại');
+    }
 
-  // Chỉ validate khi booking_id hoặc vehicle_id thay đổi.
-  // Lúc driver staff confirm chuyến chỉ update driver_confirm/start_time/notes,
-  // pre-save hook không nên chặn nếu dữ liệu cũ đã từng bị sai.
-  if (this.isModified('vehicle_id') || this.isModified('booking_id')) {
-    if (vehicle.seats !== booking.seats) {
-      throw new Error(`Xe ${vehicle.seats} chỗ không phù hợp với booking ${booking.seats} chỗ`);
+    if (this.isModified('vehicle_id') || this.isModified('booking_id')) {
+      if (vehicle.seats !== booking.seats) {
+        throw new Error(`Xe ${vehicle.seats} chỗ không phù hợp với booking ${booking.seats} chỗ`);
+      }
     }
   }
 });
@@ -377,6 +376,10 @@ tripAssignmentSchema.pre('save', async function () {
 // Sau mỗi lần tạo/sửa phân công: booking assigned, tài xế busy + gắn xe; chỉ đổi xe từ ready → not_started (giữ in-progress khi ghép thêm khách)
 tripAssignmentSchema.post('save', async function (doc) {
   const a = doc || this;
+  
+  // NẾU PHÂN CÔNG ĐÃ KẾT THÚC, KHÔNG GÁN LẠI TÀI XẾ/XE NỮA!
+  if (a.end_time) return;
+
   const Booking = mongoose.model('Booking');
   await Booking.findByIdAndUpdate(a.booking_id, { status: 'assigned' });
 

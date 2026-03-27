@@ -16,6 +16,7 @@ const staffCustomerRoutes = require('./src/router/StaffCustomer.router');
 const tripRoutes = require('./src/router/Trip.router');
 const driverTripRoutes = require('./src/router/driverTrip.router');
 const paymentRoutes= require('./src/router/Payment.router')
+const driverReviewRoutes = require('./src/router/driverReview.router');
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.DB_URL);
@@ -69,6 +70,7 @@ app.use('/api/staffListCustomers', staffCustomerRoutes);
 app.use('/api/trips', tripRoutes); 
 app.use('/api/driverTrip', driverTripRoutes);
 app.use('/api/payments',paymentRoutes);
+app.use('/api/reviews', driverReviewRoutes);
 app.use((req, res) => {
   console.log(`⚠️ 404: ${req.method} ${req.url}`);
   res.status(404).json({ 

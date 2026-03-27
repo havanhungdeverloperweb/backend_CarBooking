@@ -1,5 +1,6 @@
 const Booking = require('../models/Booking.models');
 const TripAssignment = require('../models/TripAssignment.models');
+const Trip = require('../models/Trip.models');
 const Vehicle = require('../models/Vehicle.models');
 const Driver = require('../models/Driver.models');
 const Payment = require('../models/Payment.models');
@@ -253,6 +254,40 @@ class StaffBookingController {
       }
       carpools = carpools.filter((c) => c.availableSeats > 0);
 
+      // === Query Trip entity đang active còn chổ ===
+      const tripQuery = {
+        status: { $in: ['scheduled', 'assigned', 'in-progress'] }
+      };
+      if (Number.isFinite(seatsFilter)) {
+        tripQuery.max_passengers = seatsFilter;
+      }
+
+      const activeTripsRaw = await Trip.find(tripQuery)
+        .populate('driver_id', 'name phone status')
+        .populate('vehicle_id', 'vehicle_name license_plate seats status')
+        .sort({ created_at: -1 });
+
+      const activeTrips = activeTripsRaw
+        .map((t) => ({
+          trip_id: t._id,
+          trip_code: t.trip_code,
+          route: t.route,
+          driver_id: t.driver_id?._id?.toString(),
+          driver: { name: t.driver_id?.name, phone: t.driver_id?.phone },
+          vehicle_id: t.vehicle_id?._id?.toString(),
+          vehicle: {
+            vehicle_name: t.vehicle_id?.vehicle_name,
+            license_plate: t.vehicle_id?.license_plate,
+            seats: t.vehicle_id?.seats
+          },
+          total_passengers: t.total_passengers,
+          max_passengers: t.max_passengers,
+          availableSeats: t.available_seats,
+          departure_time: t.departure_time,
+          bookings: t.bookings
+        }))
+        .filter((t) => t.availableSeats > 0);
+
       const driversWithActiveTrip = new Set();
       for (const a of activeAssignments) {
         const drv = a.driver_id;
@@ -277,6 +312,7 @@ class StaffBookingController {
         ApiResponse.success(
           {
             carpools,
+            activeTrips,
             idleDrivers: drivers,
             readyVehicles: vehicles
           },
@@ -439,10 +475,9 @@ class StaffBookingController {
             ApiResponse.error('Tài xế đang bận hoặc không hoạt động. Chọn chế độ ghép chuyến nếu cùng tài xế–xe.')
           );
         }
+        // Tự động xóa current_vehicle_id cũ nếu tài xế đã active (hoàn thành chuyến trước)
         if (driver.current_vehicle_id && driver.current_vehicle_id.toString() !== vehicleId.toString()) {
-          return res.status(400).json(
-            ApiResponse.error('Tài xế đã được gắn với xe khác. Mỗi tài xế chỉ một xe; hãy ghép vào xe đó hoặc giải phóng trước.')
-          );
+          await Driver.findByIdAndUpdate(driverId, { current_vehicle_id: null });
         }
       }
 
@@ -454,7 +489,7 @@ class StaffBookingController {
         );
       }
 
-      // Tạo phân công mới
+      // Tạo phân công mới (TripAssignment)
       const assignment = await TripAssignment.create({
         booking_id: booking._id,
         driver_id: driverId,
@@ -463,6 +498,64 @@ class StaffBookingController {
         start_time: startTime ? new Date(startTime) : null,
         driver_confirm: 0
       });
+
+      // === Tạo hoặc cập nhật Trip ===
+      try {
+        // Tìm Trip đang active cùng cặp driver+vehicle còn chỗ
+        const existingTrip = await Trip.findOne({
+          driver_id: driverId,
+          vehicle_id: vehicleId,
+          status: { $in: ['scheduled', 'assigned', 'in-progress'] }
+        });
+
+        if (existingTrip && existingTrip.available_seats >= booking.passengers) {
+          // Ghép vào Trip hiện có
+          await existingTrip.addBooking(booking);
+          console.log(`✅ Ghép booking ${booking._id} vào Trip ${existingTrip.trip_code}`);
+        } else {
+          // Tạo Trip mới
+          const tripCode = `TRIP${Date.now()}${Math.floor(Math.random() * 100)}`;
+          const newTrip = new Trip({
+            trip_code: tripCode,
+            vehicle_id: vehicleId,
+            driver_id: driverId,
+            staff_id: req.staffId,
+            route: `${booking.pickup_location} → ${booking.dropoff_location}`,
+            pickup_points: [{
+              location: booking.pickup_location,
+              coords: booking.pickup_coords,
+              time: booking.trip_date,
+              booking_id: booking._id
+            }],
+            dropoff_points: [{
+              location: booking.dropoff_location,
+              coords: booking.dropoff_coords,
+              time: null,
+              booking_id: booking._id
+            }],
+            departure_time: startTime ? new Date(startTime) : booking.trip_date,
+            max_passengers: booking.seats,
+            total_passengers: booking.passengers,
+            status: 'scheduled',
+            bookings: [{
+              booking_id: booking._id,
+              passengers: booking.passengers,
+              pickup_point: booking.pickup_location,
+              dropoff_point: booking.dropoff_location,
+              price: booking.price,
+              customer_name: booking.customer_name,
+              customer_phone: booking.customer_phone
+            }]
+          });
+          await newTrip.save();
+          // Liên kết booking với Trip
+          booking.trip_id = newTrip._id;
+          await booking.save();
+          console.log(`✅ Tạo Trip mới ${tripCode} cho booking ${booking._id}`);
+        }
+      } catch (tripErr) {
+        console.error('⚠️ Không tạo được Trip (không ảnh hưởng TripAssignment):', tripErr.message);
+      }
 
       // Cập nhật trạng thái booking
       booking.status = 'assigned';
@@ -523,15 +616,26 @@ class StaffBookingController {
         const assignment = await TripAssignment.findOne({ booking_id: id });
         
         if (assignment) {
-          // Giải phóng xe
-          await Vehicle.findByIdAndUpdate(assignment.vehicle_id, { status: 'ready' });
-          
-          // Giải phóng tài xế
-          await Driver.findByIdAndUpdate(assignment.driver_id, { status: 'active' });
-          
-          // Xóa hoặc cập nhật phân công
+          // Đánh dấu hủy phân công chuyến (set end_time để tránh trigger post save hook)
+          assignment.end_time = new Date();
           assignment.low_occupancy_reason = reason || 'Nhân viên hủy đơn';
           await assignment.save();
+
+          // Kiểm tra xem tài xế còn chuyến nào không
+          const remainingAssignments = await TripAssignment.countDocuments({
+            driver_id: assignment.driver_id,
+            end_time: null
+          });
+
+          if (remainingAssignments === 0) {
+            // Giải phóng xe
+            await Vehicle.findByIdAndUpdate(assignment.vehicle_id, { status: 'ready' });
+            // Giải phóng tài xế hoàn toàn
+            await Driver.findByIdAndUpdate(assignment.driver_id, { status: 'active', current_vehicle_id: null });
+          } else {
+            // Chỉ giải phóng tài xế khỏi busy nếu cần (nhưng không xóa xe)
+            await Driver.findByIdAndUpdate(assignment.driver_id, { status: 'active' });
+          }
         }
         
         booking.low_occupancy_reason = reason || 'Nhân viên hủy đơn';

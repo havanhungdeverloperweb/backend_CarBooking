@@ -77,6 +77,7 @@ class DriverTripController {
           start_time: assignment.start_time,
           end_time: assignment.end_time,
           assignment_source: assignment.assignment_source || 'staff',
+          price: booking?.price || 0,
           payment_method: booking?.payment_method || p?.payment_method || 'cash',
           payment_status: p?.payment_status || 'pending',
           paid_at: p?.paid_at || null
@@ -280,12 +281,23 @@ class DriverTripController {
         }
       }
       
-      // Giải phóng tài xế
-      await Driver.findByIdAndUpdate(driverId, { status: 'active' });
-      
-      // Giải phóng xe
-      if (assignment.vehicle_id) {
-        await Vehicle.findByIdAndUpdate(assignment.vehicle_id, { status: 'completed' });
+      // Kiểm tra tất cả các chuyến chưa hoàn thành của tài xế này
+      const remainingAssignments = await TripAssignment.countDocuments({
+        driver_id: driverId,
+        end_time: null
+      });
+
+      if (remainingAssignments === 0) {
+        // Giải phóng tài xế hoàn toàn (xóa current_vehicle_id)
+        await Driver.findByIdAndUpdate(driverId, { 
+          status: 'active',
+          current_vehicle_id: null 
+        });
+        
+        // Đưa xe về trạng thái sẵn sàng cho chuyến sau
+        if (assignment.vehicle_id) {
+          await Vehicle.findByIdAndUpdate(assignment.vehicle_id, { status: 'ready' });
+        }
       }
       
       return res.status(200).json(
@@ -463,14 +475,14 @@ class DriverTripController {
         dropoffCoords.lat,
         dropoffCoords.lng
       );
-      const price = calculatePriceBySeats(seats, distance);
+      const passengerCount = Number(passengers) || 1;
+      const price = calculatePriceBySeats(seats, distance, passengerCount);
 
       const pickupLabel =
         pickupAddressLabel && String(pickupAddressLabel).trim() !== ''
           ? String(pickupAddressLabel).trim()
           : 'Vị trí hiện tại';
 
-      const passengerCount = Number(passengers) || 1;
       if (passengerCount > seats) {
         return res.status(400).json(
           ApiResponse.error(`Số khách không được vượt quá ${seats} chỗ`)

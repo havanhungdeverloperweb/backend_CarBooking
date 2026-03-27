@@ -4,6 +4,7 @@ const Customer = require('../models/Customer.models');
 const ApiResponse = require('../models/ApiResponse.models');
 const Trip = require('../models/Trip.models'); // FIXED: Added Trip import
 const Payment = require('../models/Payment.models');
+const { calculatePriceBySeats, calculatePriceBreakdown } = require('../utils/tripPricing');
 
 class BookingController {
   constructor() {
@@ -122,7 +123,7 @@ class BookingController {
       // Calculate price if not provided
       let price = booking.price;
       if (!price && booking.distance) {
-        price = this.calculatePriceBySeats(seats, booking.distance);
+        price = this.calculatePriceBySeats(seats, booking.distance, passengers);
       }
 
       // Create booking
@@ -195,50 +196,8 @@ class BookingController {
     }
   }
 
-  calculatePriceBySeats(seats, distance) {
-    let basePrice = 0;
-    let extraFee = 0;
-
-    switch (seats) {
-      case 4:
-        basePrice = 1500000;
-        extraFee = 10000;
-        break;
-      case 7:
-        basePrice = 1800000;
-        extraFee = 11000;
-        break;
-      case 9:
-        basePrice = 2600000;
-        extraFee = 12000;
-        break;
-      case 16:
-        basePrice = 2000000;
-        extraFee = 9000;
-        break;
-      case 29:
-        basePrice = 3000000;
-        extraFee = 11000;
-        break;
-      case 45:
-        basePrice = 5700000;
-        extraFee = 20000;
-        break;
-      default:
-        basePrice = 1500000;
-        extraFee = 10000;
-    }
-
-    const baseDistance = 100;
-    let totalPrice = 0;
-
-    if (distance <= baseDistance) {
-      totalPrice = basePrice;
-    } else {
-      totalPrice = basePrice + (distance - baseDistance) * extraFee;
-    }
-
-    return totalPrice;
+  calculatePriceBySeats(seats, distance, passengers = 1) {
+    return calculatePriceBySeats(seats, distance, passengers);
   }
 
   async calculatePrice(req, res) {
@@ -249,14 +208,16 @@ class BookingController {
         query: req.query
       });
       
-      let seats, distance;
+      let seats, distance, passengers;
       
       if (req.method === 'GET') {
         seats = parseInt(req.query.seats);
         distance = parseFloat(req.query.distance);
+        passengers = parseInt(req.query.passengers || '1', 10);
       } else {
         seats = req.body.seats;
         distance = req.body.distance;
+        passengers = req.body.passengers;
       }
 
       if (!seats || !distance) {
@@ -265,6 +226,8 @@ class BookingController {
         );
       }
 
+      const safePassengers = Math.max(1, parseInt(String(passengers || 1), 10));
+
       const validSeats = [4, 7, 9, 16, 29, 45];
       if (!validSeats.includes(seats)) {
         return res.status(400).json(
@@ -272,8 +235,7 @@ class BookingController {
         );
       }
 
-      // Calculate price using the bound method
-      const price = this.calculatePriceBySeats(seats, distance);
+      const breakdown = calculatePriceBreakdown(seats, distance, safePassengers);
 
       const typeNames = {
         4: 'Xe 4 chỗ',
@@ -287,16 +249,22 @@ class BookingController {
       console.log('💰 Price calculated:', {
         seats,
         distance,
-        price,
+        passengers: safePassengers,
+        price: breakdown.price,
         vehicle_type: typeNames[seats]
       });
 
       return res.status(200).json(
         ApiResponse.success({
-          price: price,
+          price: breakdown.price,
           seats: seats,
           vehicle_type: typeNames[seats],
-          distance: distance
+          distance: distance,
+          passengers: safePassengers,
+          base_fare: breakdown.base_fare,
+          per_km_per_person: breakdown.per_km_per_person,
+          variable_fare: breakdown.variable_fare,
+          min_fare: breakdown.min_fare
         }, 'Tính giá thành công')
       );
 
@@ -354,6 +322,13 @@ class BookingController {
 
       const bookings = await Booking.find({ customer_phone: phone })
         .populate('vehicleType')
+        .populate({
+          path: 'tripAssignment',
+          populate: [
+            { path: 'driver', select: 'name phone' },
+            { path: 'vehicle', select: 'vehicle_name license_plate' }
+          ]
+        })
         .sort({ created_at: -1 });
 
       return res.status(200).json(

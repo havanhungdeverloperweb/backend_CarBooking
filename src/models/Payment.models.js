@@ -30,14 +30,12 @@ const paymentSchema = new mongoose.Schema({
     default: null
   },
 
-  // momo fields
   momo_order_id: { type: String, default: null, index: true },
   momo_request_id: { type: String, default: null, index: true },
   momo_trans_id: { type: String, default: null, index: true },
   momo_result_code: { type: String, default: null },
   momo_raw: { type: mongoose.Schema.Types.Mixed, default: null },
 
-  // who confirmed (for cash confirmation)
   confirmed_by_staff_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', default: null },
   confirmed_by_driver_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver', default: null }
 }, {

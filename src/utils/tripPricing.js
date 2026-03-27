@@ -1,45 +1,44 @@
-/**
- * Cùng logic giá với Booking.controller.calculatePriceBySeats
- */
-function calculatePriceBySeats(seats, distance) {
-  let basePrice = 0;
-  let extraFee = 0;
+// Giá đề xuất thực tế hơn:
+// total = base_fare + (distance_km * per_km_per_person * passengers)
+// Có giá tối thiểu để tránh quãng ngắn quá rẻ.
+const PRICING_TABLE = {
+  // min_fare = base_fare để đảm bảo giá luôn tỉ lệ với số người (không bị "đè" khi quãng đường rất ngắn)
+  4: { type_name: 'Xe 4 chỗ', base_fare: 25000, per_km_per_person: 10000, min_fare: 25000 },
+  7: { type_name: 'Xe 7 chỗ', base_fare: 30000, per_km_per_person: 10000, min_fare: 30000 },
+  9: { type_name: 'Xe 9 chỗ', base_fare: 35000, per_km_per_person: 9500, min_fare: 35000 },
+  16: { type_name: 'Xe 16 chỗ', base_fare: 50000, per_km_per_person: 9000, min_fare: 50000 },
+  29: { type_name: 'Xe 29 chỗ', base_fare: 70000, per_km_per_person: 8500, min_fare: 70000 },
+  45: { type_name: 'Xe 45 chỗ', base_fare: 90000, per_km_per_person: 8000, min_fare: 90000 }
+};
 
-  switch (seats) {
-    case 4:
-      basePrice = 1500000;
-      extraFee = 10000;
-      break;
-    case 7:
-      basePrice = 1800000;
-      extraFee = 11000;
-      break;
-    case 9:
-      basePrice = 2600000;
-      extraFee = 12000;
-      break;
-    case 16:
-      basePrice = 2000000;
-      extraFee = 9000;
-      break;
-    case 29:
-      basePrice = 3000000;
-      extraFee = 11000;
-      break;
-    case 45:
-      basePrice = 5700000;
-      extraFee = 20000;
-      break;
-    default:
-      basePrice = 1500000;
-      extraFee = 10000;
-  }
+function getPricingBySeats(seats) {
+  return PRICING_TABLE[Number(seats)] || PRICING_TABLE[4];
+}
 
-  const baseDistance = 100;
-  if (distance <= baseDistance) {
-    return basePrice;
-  }
-  return basePrice + (distance - baseDistance) * extraFee;
+function calculatePriceBreakdown(seats, distance, passengers = 1) {
+  const cfg = getPricingBySeats(seats);
+  const safeDistance = Math.max(0, Number(distance) || 0);
+  const safePassengers = Math.max(1, Math.floor(Number(passengers) || 1));
+
+  const variable = safeDistance * cfg.per_km_per_person * safePassengers;
+  const rawTotal = cfg.base_fare + variable;
+  const total = Math.max(cfg.min_fare, Math.round(rawTotal));
+
+  return {
+    seats: Number(seats),
+    passengers: safePassengers,
+    distance: safeDistance,
+    vehicle_type: cfg.type_name,
+    base_fare: cfg.base_fare,
+    per_km_per_person: cfg.per_km_per_person,
+    min_fare: cfg.min_fare,
+    variable_fare: Math.round(variable),
+    price: total
+  };
+}
+
+function calculatePriceBySeats(seats, distance, passengers = 1) {
+  return calculatePriceBreakdown(seats, distance, passengers).price;
 }
 
 function haversineKm(lat1, lon1, lat2, lon2) {
@@ -56,4 +55,4 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-module.exports = { calculatePriceBySeats, haversineKm };
+module.exports = { calculatePriceBySeats, calculatePriceBreakdown, getPricingBySeats, haversineKm };
