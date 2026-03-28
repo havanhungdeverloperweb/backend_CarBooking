@@ -5,10 +5,20 @@ const dotenv = require('dotenv');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 dotenv.config();
+
+// Diagnostic logging for Docker environment
+console.log('--- Environment Diagnostics ---');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('PORT:', process.env.PORT);
+console.log('DB_URL:', process.env.DB_URL ? `Data exists (Length: ${process.env.DB_URL.length})` : 'MISSING ❌');
+console.log('CLIENT_URL:', process.env.CLIENT_URL || 'MISSING ❌');
+console.log('CLIENT_URL_SHIP:', process.env.CLIENT_URL_SHIP || 'MISSING ❌');
+console.log('-------------------------------\n');
+
 const port = process.env.PORT || 5000;
 const staffRoutes = require('./src/router/Staff.router');
 const driverRoutes = require('./src/router/Driver.router');
-const driverManagementRoutes = require('./src/router/driverManagement.router');
+const driverManagementRoutes = require('./src/router/DriverManagement.router');
 const vehicleRoutes = require('./src/router/Vehicle.router');
 const bookingRoutes = require('./src/router/Booking.router');
 const staffBookingRoutes = require('./src/router/staffBooking.router');
@@ -19,6 +29,9 @@ const paymentRoutes= require('./src/router/Payment.router')
 const driverReviewRoutes = require('./src/router/driverReview.router');
 const connectDB = async () => {
   try {
+    if (!process.env.DB_URL) {
+      throw new Error('Cấu hình DB_URL bị thiếu (undefined)');
+    }
     await mongoose.connect(process.env.DB_URL);
     console.log('✅ Kết nối MongoDB thành công');
   } catch (error) {
@@ -31,17 +44,23 @@ connectDB();
 const app = express();
 
 const allowedOrigins = [
-  process.env.CLIENT_URL || 'http://localhost:5173',
-  process.env.CLIENT_URL_SHIP || 'http://localhost:5174'
-];
+  process.env.CLIENT_URL,
+  process.env.CLIENT_URL_SHIP,
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'http://localhost:5174'
+].filter(Boolean); // Loại bỏ các giá trị undefined
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      // Cho phép subdomain của render.com trong production nếu cần
+      if (process.env.NODE_ENV === 'production' && origin.endsWith('.render.com')) {
+        return callback(null, true);
+      }
       callback(new Error('Not allowed by CORS'));
     }
   },
