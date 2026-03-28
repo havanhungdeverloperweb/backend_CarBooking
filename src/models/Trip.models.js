@@ -21,8 +21,6 @@ const tripSchema = new mongoose.Schema({
     ref: 'Staff',
     required: true
   },
-  
- 
   route: {
     type: String,
     required: true
