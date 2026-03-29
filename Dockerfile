@@ -6,7 +6,7 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY backend/package.json backend/package-lock.json ./
 
 # Install production dependencies only
 RUN npm ci --omit=dev
@@ -26,9 +26,9 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --from=deps /app/node_modules ./node_modules
 
 # Copy application source code
-COPY package.json ./
-COPY server.js ./
-COPY src ./src
+COPY backend/package.json ./
+COPY backend/server.js ./
+COPY backend/src ./src
 
 # Set environment variables
 ENV NODE_ENV=production
